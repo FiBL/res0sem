@@ -1,0 +1,397 @@
+---
+title: "Analysis Re0sem data - Reproducing results"
+author: "Josep Massana Codina, Matthieu Wilhelm"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+## Data loading and processing
+
+We first read the data, that are stored in FOLA at the moment as a `.csv` file.
+
+```{r setup, include=FALSE}
+## Note that the order in which the packages are loaded matters here because of 
+## a conflict with dplyr (causes issues with the overloaded function `select`)
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(forcats) # for the manipulation of factors within piped-chained operations 
+library(kableExtra) # to display nice tables
+library(patchwork) # to display multiple plots on the same figure
+library(lme4) # fitting linear mixed models
+library(emmeans) # estimating marginal means, extracting components of mixed models
+library(multcomp) # for the function glht used for the Dunnet's test
+library(car) # companion to applied regression, for the function Anova
+
+# Importing the preprocessed data from local CSV files
+raw_data <- read.csv("data/raw_data.csv")
+```
+
+<!-- We recode the various treatment modalities -->
+
+```{r , echo=FALSE}
+# Data is already processed in the preprocessing step
+# Convert back to proper factor types after CSV read
+raw_data <- raw_data |> 
+  mutate(across(c(Region, Production.mode, Year, Treatment, Treatment_Group), factor)) |> 
+  rename(`Production mode` = Production.mode) |> 
+  mutate(across(where(~ !is.numeric(.x)), .fns = factor)) |> 
+  mutate(Treatment = relevel(Treatment, ref = "Temoin non traite"), Treatment_Group = relevel(Treatment_Group, ref = "Control"))
+```
+
+We first show the various treatments present in the data:
+
+```{r show treatments, echo= FALSE}
+print_vector <- function(v, n_col = 2, caption = "Treatments") {
+  # Longueur
+  len <- length(v)
+  n_row <- ceiling(len / n_col)
+  
+  # Compléter si nécessaire
+  v_padded <- c(v, rep("", n_row * n_col - len))
+  
+  # Mise en matrice
+  mat <- matrix(v_padded, ncol = n_col, byrow = TRUE)
+  
+  # Affichage
+  kable(mat, caption = caption) %>%
+    kable_styling(full_width = FALSE, position = "center")
+}
+
+print_vector((unique(raw_data$Treatment) |> as.character()))
+```
+
+Alternatively, we can see the sample sizes for each treatments and year. The rows that are not highlighted will not be considered in the following analysis because of unsufficient sample sizes. 
+
+```{r display treatment,  include=T, echo = F, message=FALSE, warning=FALSE}
+tab_treatments <- raw_data |> 
+  group_by(Year, Treatment) |> 
+  summarise(sampleSize = n()) |> 
+  pivot_wider(id_cols = Treatment, names_from = Year, values_from = sampleSize, values_fill = 0)
+kableExtra::kable(tab_treatments) |> 
+   kable_styling() |> 
+    row_spec(which(tab_treatments$Treatment %in% c("Temoin non traite", "Conventionnel", "Thermoseed" , "Evonta", "Tillecur")), bold = T, background = "#E4BA7E")
+
+```
+
+
+We compute the average over the columns `Nombre_Plants.X` and modify the class of some columns. 
+
+```{r modification class variables, warning=FALSE}
+# Data types are already processed in preprocessing step
+# Just ensure proper data types after CSV read
+raw_data <- raw_data |> 
+  mutate(Rendement = as.numeric(Rendement))
+```
+
+We now consider the subset of the data without the treatments that only have been used a few times
+
+```{r raw_data2}
+raw_data2 <- raw_data|> filter(Treatment_Group != "Other alternatives")  
+```
+
+## Exploratory data analysis
+
+
+```{r custom graphical settings and usefull funs}
+
+
+#Customized graphism
+
+custom_colors <- c("ThermoSeed"= "#F8766D", "Synthetic" = "#00BF7D", "Tillecur" = "#A3A500", "E-beam" = "#00B0F6")
+my_theme <- theme_bw() +
+theme(panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(),
+axis.text.x = element_text(angle = 45, hjust = 1) )
+
+plot_treat_fun <- function(data, var, lab_y, main = "")
+{
+  ggplot(data, mapping = aes(x  = Treatment_Group, y = get(var), fill = Treatment_Group)) +
+    geom_boxplot(outlier.shape = NA, width = 0.6) +   # hide boxplot outliers
+    geom_jitter(size = 1.5, alpha = 0.4, width = 0.15) +  # smaller, semi-transparent points
+    facet_grid(~ Year) +
+    xlab("") +
+    scale_fill_manual(values=custom_colors) +
+    ylab(lab_y) + 
+    my_theme+
+    ggtitle(main) +
+    theme(legend.position="none",
+          axis.text.x = element_text(size = 10, angle = 45, hjust=1),        # x-axis labels
+          axis.text.y = element_text(size = 10),       # y-axis labels
+          axis.title.y = element_text(size = 10),      # y-axis title
+          strip.text = element_text(size = 10, face="bold"))  # facet labels
+}
+```
+
+We start by creating four different plots highligting several different features of the data:
+
+```{r plots features, warning=FALSE, include=T, echo = F}
+nb_plants_global <- plot_treat_fun(data = raw_data2, var = "Nombre.Plants.avg", "N° plants/meter")
+yield_global <-  plot_treat_fun(data = raw_data2, var = "Rendement", lab_y = "Yield (dT/ha)")
+prot_global <- plot_treat_fun(data = raw_data2, var = "Proteine", lab_y = "Protein (%)")
+TGW_global <- plot_treat_fun(data = raw_data2, var = "TGW.g.", lab_y = "TGW (g)")
+
+```
+
+```{r save plots, warning= FALSE, fig.height = 15, include=T, echo = F}
+(nb_plants_global  + ggtitle('A'))/(yield_global  + ggtitle('B'))/(prot_global+ ggtitle('C'))/(TGW_global + ggtitle('D')) 
+ggsave("figures/figure_S2.png",
+       ##four_stacked,
+       width = 15.92,
+       height = 24,
+       units = "cm")
+
+```
+
+
+
+We now compare the differences between the various modalities and the control for different variables of interest
+
+```{r difference with control, warning= FALSE, fig.height = 15, include=T, echo = F}
+
+# creates a function that allows one to make the comparison with the control with the variable of interest as input
+compare2_control <- function(dat = raw_data, var)
+{
+  dat |> 
+    dplyr::select(CODE, Region, Year, Treatment_Group, {{var}} ) |> 
+    dplyr::filter(Treatment_Group != "Other alternatives") |> 
+    pivot_wider(names_from = Treatment_Group, values_from = {{var}}) |> 
+    mutate(across(.cols = unique(raw_data$Treatment_Group)[! unique(raw_data$Treatment_Group) %in% c("Control", "Other alternatives")], .fns = ~.x - Control)) |> 
+    pivot_longer(cols =unique(raw_data$Treatment_Group)[! unique(raw_data$Treatment_Group) %in% c("Control", "Other alternatives")], names_to = "Treatment_Group", values_to = var ) |> 
+    filter(Treatment_Group != "Control" ) |> 
+    mutate(Treatment_Group = factor(Treatment_Group, levels = c("Synthetic", "E-beam", "ThermoSeed", "Tillecur") ))
+}
+
+diff_nb_plants <- plot_treat_fun(data = compare2_control(raw_data, "Nombre.Plants.avg"), var = "Nombre.Plants.avg", "N° plants/meter") +
+  geom_hline(yintercept =  0, col = "red")
+diff_yield <-  plot_treat_fun(data = compare2_control(raw_data, "Rendement"), var = "Rendement", lab_y = "Yield (dT/ha)") +
+  geom_hline(yintercept =  0, col = "red")
+diff_prot <- plot_treat_fun(data = compare2_control(raw_data, "Proteine"), var = "Proteine", lab_y = "Protein (%)") +
+  geom_hline(yintercept =  0, col = "red")
+diff_TGW <- plot_treat_fun(data = compare2_control(raw_data, "TGW.g."), var = "TGW.g.", lab_y = "TGW (g)") +
+  geom_hline(yintercept =  0, col = "red")
+
+plt <- diff_nb_plants/diff_yield/diff_prot/diff_TGW
+plt + plot_annotation(
+  title = "Difference with control")
+```
+
+```{r save plots figs differences, include=T, echo = F, warning=FALSE}
+
+diff_nb_plants + ggtitle(label = "Difference with control")
+
+ggsave("figures/figure_1.png",
+       width = 15.92, 
+       height = 8.5, 
+       units = "cm")
+
+diff_yield + ggtitle(label = "Difference with control", subtitle = "")
+
+ggsave("figures/figure_2.png",
+       width = 15.92, 
+       height = 8.5, 
+       units = "cm")
+
+plt <- (diff_prot + ggtitle('A'))/(diff_TGW + ggtitle('B'))
+plt + plot_annotation(
+  title = "Difference with control") #+
+  # plot_layout(heights = unit(c(8.5, 8.5), c('cm', 'cm')), )
+
+
+ggsave("figures/figure_3.png",
+       width = 15.92, 
+       height = 17, 
+       units = "cm")
+
+
+```
+
+There is some correlation among the four variable of interest, as it can be seen from the following plot
+
+```{r correlation variable of interest, include=TRUE, echo=F}
+corrplot::corrplot(raw_data2 |> dplyr::select(Nombre.Plants.avg, Rendement, Proteine, TGW.g.) |> rename(`Nb plants/m` = Nombre.Plants.avg, Yield = Rendement, TGW = TGW.g.) |> cor(use = "complete.obs", method = "spearman"), diag = FALSE )
+```
+
+
+
+### Some analyses
+
+We are interested in the four following variables: number of plants by meter, yield, proteine and thousand grain weight (TGW). We fit several linear mixed model based and diagnose them, possibly using transfomed response variables. Note that the data are filtered so that the category `Other treatments` is not considered. Note that this analysis is not based on a controlled experimental design. Hence, any generalization beyond this study should be done with great care. We will use the same model for the 4 variable of interest, up to a transformation, to get a satisfactory fit of the model. There is some correlation among those variables, but this is not modelled (i.e. we do not fit a joint model for all the variables of intrest) and we instead fit the same model for each variable, separately. 
+
+#### Number of plants
+
+```{r avg nb plants}
+model_pl_m <- lmerTest::lmer(
+  log(Nombre.Plants.avg) ~ Treatment_Group + (1 | Year) + (1 | CODE), 
+  data = raw_data2)
+## Diagnostics 
+## Tukey-Anscombe plot
+plot(y = residuals(model_pl_m, scaled = T), x = predict(model_pl_m), 
+     main = "scaled residulas vs fitted", ylab = "scaled residuals", xlab = "fitted values")
+
+qqnorm(residuals(model_pl_m), main = "QQ-plot of residuals")
+qqline(residuals(model_pl_m))
+
+## QQ-plots
+## here, random effects do not seem to be normally distributed
+qqnorm(ranef(model_pl_m)$'CODE'[, 1], 
+       main = "Random effects CODE")
+qqline(ranef(model_pl_m)$CODE[,"(Intercept)"])
+
+## Simulated residuals do not seem to highlight some obvious problem, n is suggested in the help of simulateResiduals
+simres <- DHARMa::simulateResiduals(model_pl_m, n = 1000, seed = 1)
+plot(simres)
+emm <- emmeans(model_pl_m, ~ Treatment_Group)
+contrast(emm, method = "trt.vs.ctrl", ref = "Control")
+
+```
+The QQplots of both the scaled and simulated residuals do not indicate any departure from the Gaussian distribution. The random effect for the farm (variable `CODE`) does not seem to be normally distributed, which can be a [serious issue in general](https://onlinelibrary.wiley.com/doi/epdf/10.1111/insr.12378), maybe not that problematic in this particular case. 
+Now that the estimation has been carefully diagnosed, we can interpret the results.
+
+```{r summary nb plant}
+anova(model_pl_m)
+summary(model_pl_m)
+```
+We see that there is no significant effect for any of the treatment that have been considered compared to the untreated. 
+
+#### Yield
+
+We now turn to the yield.
+
+```{r yield model}
+model_yield <- lmerTest::lmer(
+  Rendement ~ Treatment_Group + (1|Year) + (1 | CODE), 
+  data = raw_data2)
+
+plot(y = residuals(model_yield, scaled = T), x = predict(model_yield),
+     main = "scaled residulas vs fitted", ylab = "scaled residuals", xlab = "fitted values")
+
+qqnorm(residuals(model_yield), main = "QQ-plot of residuals")
+qqline(residuals(model_yield))
+## here, random effects do not seem to be normally distributed
+qqnorm(ranef(model_yield)$'CODE'[, 1], 
+       main = "Random effects CODE")
+qqline(ranef(model_yield)$CODE[,"(Intercept)"])
+## Simulated residuals do not seem to highlight some obvious problem
+simres <- DHARMa::simulateResiduals(model_yield, n = 1000, seed = 1)
+plot(simres)
+emm <- emmeans(model_yield, ~ Treatment_Group)
+contrast(emm, method = "trt.vs.ctrl", ref = "Control")
+```
+
+
+The scaled residuals seem to be reasonably close to a normal distribution while having fairly heavier tails than the Gaussian, as it can be seen in the QQ-Plot of the scaled residuals. The simulated residuals from 
+The model show a reasonnable fit but indicate some departures from a Gaussian distribution.
+
+```{r summary yield}
+anova(model_yield, type=2)
+summary(model_yield)
+```
+In this case, too, no treatment seem to significantly improve compared to the untreated control. 
+
+#### Proteine and TGW
+
+We proceed with the Proteine and with the TGW (Thousand grain weight) variables in the same way. In both cases, the diagnostics do not show large depratures from the assumptions and, again, no treatment seem to be more efficient than the control. 
+
+
+```{r model Proteine}
+model_prot <- lmerTest::lmer(
+  (Proteine) ~ Treatment_Group + (1| Year) + (1 | CODE),
+  data = raw_data2)
+
+plot(y = residuals(model_prot, scaled = T), x = predict(model_prot), main = "scaled residulas vs fitted", ylab = "scaled residuals", xlab = "fitted values")
+
+## QQ-plots
+qqnorm(residuals(model_prot))
+qqline(residuals(model_prot))
+qqnorm(ranef(model_prot)$'CODE'[, 1], 
+       main = "Random effects CODE")
+qqline(ranef(model_prot)$CODE[,"(Intercept)"])
+
+simres <- DHARMa::simulateResiduals(model_prot, n = 1000)
+plot(simres)
+emm <- emmeans(model_prot, ~ Treatment_Group)
+contrast(emm, method = "trt.vs.ctrl", ref = "Control")
+```
+
+
+```{r anova proteine}
+anova(model_prot)
+summary(model_prot)
+```
+
+```{r model tgw}
+model_tgw <- lmerTest::lmer(
+  sqrt(TGW.g.) ~ Treatment_Group + (1 | Year) + (1 | CODE),
+  data = raw_data2)
+plot(y = residuals(model_tgw, scaled = T), x = predict(model_tgw), main = "scaled residulas vs fitted", ylab = "scaled residuals", xlab = "fitted values")
+
+qqnorm(residuals(model_tgw))
+qqline(residuals(model_tgw))
+## QQ-plots
+## here, random effects do not seem to be normally distributed
+qqnorm(ranef(model_tgw)$'CODE'[, 1], 
+       main = "Random effects CODE")
+qqline(ranef(model_tgw)$CODE[,"(Intercept)"])
+
+simres <- DHARMa::simulateResiduals(model_tgw, n = 1000)
+plot(simres)
+emm <- emmeans(model_tgw, ~ Treatment_Group)
+contrast(emm, method = "trt.vs.ctrl", ref = "Control")
+```
+
+```{r anova tgw}
+anova(model_tgw)
+summary(model_tgw)
+```
+
+
+Thus, in the data set considered here and with the limitations inherent to an observatory data analysis, it does not seem to be any of the considered treatment that is particularly efficient for _any of the considered variables_.
+
+We suggest to consider with great care the marginal means (`emmeans` package). Quoting the very first line of the [vignette](https://cran.r-project.org/web/packages/emmeans/vignettes/basics.html)
+
+>To start off with, we should emphasize that the underpinnings of estimated marginal means – and much of what the emmeans package offers – relate more to experimental data than to observational data. 
+
+
+### Subgroup analysis: farm management as variable
+
+
+We also investigate the interaction between the production mode and the treatments. First, let us just show the number of observations for each combination of production modes and treatment.
+
+```{r show subgroup tables, warning=FALSE, message=FALSE}
+
+raw_data2 |>
+  group_by(`Production mode`, Treatment) |> 
+  summarise(numbers = n()) |> 
+  pivot_wider(names_from = `Production mode`, values_from = numbers) |> 
+  mutate(Treatment = if_else(Treatment == "Temoin non traite", true = "Untreated control", false = Treatment)) |>
+  kableExtra::kable()
+
+```
+
+We then fit a model appropriate to study the interaction between the treatments and the production mode, as in the following code. 
+
+```{r analysis interaction}
+model_pl_m_interaction <- lme4::lmer(
+  log(Nombre.Plants.avg) ~ Treatment_Group * `Production mode` + (1 | Year) + (1 | CODE), 
+  data = raw_data2)
+plot(y = residuals(model_pl_m_interaction, scaled = T), x = predict(model_pl_m_interaction), main = "scaled residulas vs fitted", ylab = "scaled residuals", xlab = "fitted values")
+
+## QQ-plots
+qqnorm(residuals(model_pl_m_interaction))
+qqline(residuals(model_pl_m_interaction))
+qqnorm(ranef(model_pl_m_interaction)$'CODE'[, 1], 
+       main = "Random effects CODE")
+qqline(ranef(model_pl_m_interaction)$CODE[,"(Intercept)"])
+
+simres <- DHARMa::simulateResiduals(model_pl_m_interaction, n = 1000)
+plot(simres)
+```
+
+The fit is reasonable, while not perfect. Still, we can estimate the effect of the treatments on the average number of  plants (on the log-scale) for each of the different production modes (organic, conventional without fungicide and conventional with fungicide). The results are reported below:
+
+```{r subgroup analysis}
+emm <- emmeans(model_pl_m_interaction, ~ Treatment_Group | `Production mode`)
+contrast(emm, method = "trt.vs.ctrl", ref = "Control") |> kableExtra::kable()
+```
+
+None of the interaction is significantly different from the untreated control.
