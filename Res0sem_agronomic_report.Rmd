@@ -7,7 +7,7 @@ output: html_document
 
 ## Data loading and processing
 
-We first read the data, that are stored in FOLA at the moment as a `.csv` file.
+We first read the data, that are stored as a `.csv` file.
 
 ```{r setup, include=FALSE}
 ## Note that the order in which the packages are loaded matters here because of 
@@ -25,8 +25,6 @@ library(car) # companion to applied regression, for the function Anova
 # Importing the preprocessed data from local CSV files
 raw_data <- read.csv("data/raw_data.csv")
 ```
-
-<!-- We recode the various treatment modalities -->
 
 ```{r , echo=FALSE}
 # Data is already processed in the preprocessing step
@@ -267,7 +265,7 @@ plot(y = residuals(model_yield, scaled = T), x = predict(model_yield),
 
 qqnorm(residuals(model_yield), main = "QQ-plot of residuals")
 qqline(residuals(model_yield))
-## here, random effects do not seem to be normally distributed
+## here, random effects do seem to be normally distributed
 qqnorm(ranef(model_yield)$'CODE'[, 1], 
        main = "Random effects CODE")
 qqline(ranef(model_yield)$CODE[,"(Intercept)"])
@@ -389,7 +387,7 @@ plot(simres)
 
 The fit is reasonable, while not perfect. Still, we can estimate the effect of the treatments on the average number of  plants (on the log-scale) for each of the different production modes (organic, conventional without fungicide and conventional with fungicide). The results are reported below:
 
-```{r subgroup analysis}
+```{r subgroup analysis, warning=FALSE, message=FALSE}
 emm <- emmeans(model_pl_m_interaction, ~ Treatment_Group | `Production mode`)
 contrast(emm, method = "trt.vs.ctrl", ref = "Control") |> kableExtra::kable()
 ```
