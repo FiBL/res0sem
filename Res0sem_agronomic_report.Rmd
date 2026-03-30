@@ -22,8 +22,9 @@ library(emmeans) # estimating marginal means, extracting components of mixed mod
 library(multcomp) # for the function glht used for the Dunnet's test
 library(car) # companion to applied regression, for the function Anova
 
-# Importing the preprocessed data from local CSV files
-raw_data <- read.csv("data/raw_data.csv")
+# Importing the data directly from Zenodo
+# raw_data <- read.csv("data/raw_data.csv")
+raw_data <- read.csv("https://zenodo.org/records/19335779/files/Res0sem_agronomy_data.csv?download=1")
 ```
 
 ```{r , echo=FALSE}
