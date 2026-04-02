@@ -21,9 +21,9 @@ with the support of many producers, who have actively participated in the data c
 The data set is accessible on [Zenodo](https://zenodo.org/records/19335779/files/Res0sem_agronomy_data.csv?download=1). It contains four variables of interest:
 
 
-- Yield
-- Proteine
+- Yield [dt/ha]
+- Proteine [%]
 - Thousand grain weight (gr)
-- Average number of plants/meter 
+- Average number of plants/meter [nb plants/m]
 
 In addition to those variables, we have information about the treatment, the region, the production mode (organic, without fungicide or conventional) and the year, as well as an identifier for the farm. The precise location of the farms are not made available for privacy reasons. See the [Zenodo](https://zenodo.org/records/19335779) page for a detailed description of the data set.
