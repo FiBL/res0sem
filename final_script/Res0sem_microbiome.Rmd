@@ -1,0 +1,2431 @@
+---
+title: "Analysis Res0sem Microbiome Data"
+author: Natacha Bodenhausen
+date: '`r Sys.Date()`'
+output:
+  pdf_document:
+        toc: yes
+urlcolor: blue
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, cache = FALSE)
+
+suppressPackageStartupMessages(library(tidyverse))
+
+library("phyloseq")
+library("vegan") # it's included in phyloseq
+
+library(cowplot) # plot_grid
+library(lmerTest)  # automatically loads lme4 too
+library(emmeans)  # for posthoc test
+library("RColorBrewer")
+
+
+
+set.seed(8037)
+
+
+
+```
+
+
+```{r}
+my_theme <- theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+
+  
+theme_main <-theme(text = element_text(size = 10))
+
+custom_colors <- c("alternative" = "#E76BF3", "ThermoSeed"= "#F8766D", "synthetic" = "#00BF7D", "Tillecur" = "#A3A500", "Evonta" = "#00B0F6", "soil" = "brown", "control" = "grey")
+
+
+makeFig <- TRUE
+```
+
+\newpage
+
+
+
+```{r, eval = TRUE}
+sample_table_ITS <- read_csv("../final_data/sample_ITS.csv")
+
+
+sample_table_ITS <- sample_table_ITS %>% column_to_rownames("SampleID")
+
+
+sample_table_16S <- read_csv("../final_data/sample_16S.csv")
+
+
+sample_table_16S <- sample_table_16S %>% column_to_rownames("SampleID")
+
+
+
+```
+
+
+
+```{r, eval = TRUE}
+tax_ITS<- read.csv("../final_data/tax_ITS.csv")
+
+tax_ITS <-as.matrix(tax_ITS)
+
+
+
+otu_ITS <- read.csv("../final_data/otu_ITS.csv")
+
+otu_ITS <-as.matrix(otu_ITS)
+
+
+#otu_ITS <- as.matrix(otu_ITS)
+
+
+physeq_ITS <- phyloseq(otu_table(otu_ITS, taxa_are_rows = TRUE), 
+                       tax_table(tax_ITS),
+                       sample_data(sample_table_ITS))
+
+
+```
+
+
+
+
+```{r, eval = TRUE}
+tax_16S<- read.csv("../final_data/tax_16S.csv")
+
+tax_16S <-as.matrix(tax_16S)
+
+
+
+otu_16S <- read.csv("../final_data/otu_16S.csv")
+
+otu_16S <-as.matrix(otu_16S)
+
+
+#otu_ITS <- as.matrix(otu_ITS)
+
+
+physeq_16S <- phyloseq(otu_table(otu_16S, taxa_are_rows = TRUE), 
+                       tax_table(tax_16S),
+                       sample_data(sample_table_16S))
+
+
+```
+
+
+# Quality of sequencing
+
+## remove non Fungi (wrong assignement)
+
+
+```{r}
+# in the new dataset, 
+# there are no Annelida 
+
+# physeq_ITS <- subset_taxa(physeq_ITS, !Phylum=="Annelida"  | is.na(Phylum))
+
+physeq_ITS <- subset_taxa(physeq_ITS, !Phylum=="Cercozoa"| is.na(Phylum))
+
+```
+
+## remove  mitocondria  and chloroplast
+
+
+```{r}
+
+# Mitochondria are at the phylum level
+physeq_16S <-  subset_taxa( physeq_16S,
+                        !Family== "Mitochondria"| is.na(Family))
+
+# Chloroplast are at the order level
+physeq_16S <-  subset_taxa( physeq_16S,
+                        !Order== "Chloroplast"| is.na(Order))
+
+```
+
+
+## ITS rarefaction plot
+
+```{r prepare_rarefaction_plot, include=FALSE}
+
+for_vegan_ITS <-t(as.data.frame(otu_table(physeq_ITS, 
+                                                 taxa_are_rows =TRUE)))
+
+# default plot is all in black, with black lines for the number of samples
+rarefaction_ITS <- rarecurve(for_vegan_ITS, 
+                                step = 1000, 
+                                sample = 10000, 
+                                xlab="number of sequences",
+                                ylab="number of OTUs",label=FALSE)
+
+```
+
+
+```{r}
+plot_data_ITS <- rarefaction_ITS %>% 
+  purrr::map(~ tibble(
+    y = as.vector(.x),
+    x = unname(attr(.x, "Subsample")),
+    steps = names(.x))) %>%
+  tibble(data = ., sample = seq_along(.)) %>%
+  unnest(data)
+
+stopifnot(identical(sort(unique(plot_data_ITS$sample)), 1:NROW(sample_data(physeq_ITS))))
+```
+
+
+```{r, eval = TRUE}
+number_sequences_perSample_ITS <-sample_sums(physeq_ITS)
+
+#min_number <-min(number_sequences_perSample_ITS)
+raremax_ITS <- 5000
+
+## color by habitat
+plot_data_ITS$color <- sample_data(physeq_ITS)$habitat [plot_data_ITS$sample]
+
+
+rare_ITS <- ggplot(plot_data_ITS) +
+  geom_line(aes(x , y, color = color, 
+                group = sample)) +
+  geom_vline(xintercept = raremax_ITS, 
+             color = "darkgrey") +
+  #scale_color_manual(values = six_colors) +
+  labs(title = "Fungi",
+       x = "number of sequences", 
+       y = "number of OTUs", 
+       color = NULL) +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(legend.position = "bottom")
+
+print(rare_ITS)
+
+
+
+
+
+
+```
+
+\newpage
+
+## ITS transform data
+
+```{r, echo=TRUE}
+
+physeq_ITS_norm<-  transform_sample_counts(physeq_ITS, function(x) x / sum(x) )
+
+
+physeq_ITS_hell<-  transform_sample_counts(physeq_ITS, function(x) sqrt(x / sum(x) ))
+
+
+```
+
+## ITS Stacked barplot at the phylum level
+
+Focus on the control samples samples 
+
+```{r}
+physeq_ITS_control <- subset_samples(physeq_ITS_norm, 
+                                  traitement =="control")
+
+physeq_ITS_control_norm<-  transform_sample_counts(physeq_ITS_control, function(x) x / sum(x)*100 )
+
+##colSums(otu_table(physeq_ITS_control_norm))
+
+## remove OTU which are not in the control
+
+physeq_ITS_control_norm <- prune_taxa(
+                                   rowSums(otu_table(physeq_ITS_control_norm))>0, physeq_ITS_control_norm)
+
+
+```
+
+```{r}
+
+
+# aggregate the OTUs with same Phylum names
+dat_merge_ITS <- tax_glom(physeq = physeq_ITS_control_norm, 
+                      "Phylum", NArm = FALSE) 
+#colSums(otu_table(dat_merge))
+
+molten_dat_phylum_merge_ITS <- psmelt(dat_merge_ITS)
+
+```
+
+```{r}
+
+molten_dat_phylum_merge_ITS<- molten_dat_phylum_merge_ITS %>%
+  mutate("Taxonomy" = case_when(Abundance >= 2 ~ Phylum,
+                             Abundance < 2 ~ "less than 2%"))%>% 
+  mutate(Taxonomy = replace_na(Taxonomy,"not assigned"))
+
+```
+
+
+```{r}
+### Defining  colors by phylum
+
+# display.brewer.pal(9, name = "Set1")
+#  brewer.pal(9, name = "Set1")
+# 
+# 
+
+
+#levels(as.factor(molten_dat_phylum_merge_ITS$Taxonomy))
+
+plotColorBarplot_ITS=c(
+    "Ascomycota"="#E41A1C",
+    "Basidiomycota"="#377EB8",
+    "Chytridiomycota"="#FF7F00",
+    #"Glomeromycota"="#999999",
+    #"Monoblepharomycota"= "#FF7F00",
+    "Mortierellomycota"= "#F781BF",
+    #"Olpidiomycota" = "#FFFF33",
+    "Rozellomycota" = "#984EA3",
+    "Zoopagomycota" = "#A65628",
+    "less than 2%"="grey50",
+    "not assigned" = "grey90")
+
+## Same colors as Bodenhausen et al 2023
+```
+
+```{r}
+molten_dat_phylum_merge_ITS %>% 
+  group_by(Phylum)%>% 
+  summarise(mean_value = mean(Abundance)) %>%
+  arrange(desc(mean_value))
+```
+
+
+```{r}
+
+
+p_phyla_ITS <- ggplot(molten_dat_phylum_merge_ITS, 
+                  aes(x = code, 
+                             y = Abundance,
+                             fill = Taxonomy)) + 
+  geom_bar(stat = "identity", position = "stack")+
+  facet_grid(habitat  ~ management, scales = "free_x", space = "free_x")+
+   scale_fill_manual(values = plotColorBarplot_ITS)+
+  labs( title = "Fungi",
+        y = "Relative abundance (%)", 
+        x = NULL)+
+  theme(legend.position="bottom")+
+  theme(axis.text.x = element_text(size = 6))
+  
+  
+
+p_phyla_ITS
+
+```
+
+
+
+
+## 16S rarefaction plot
+
+```{r prepare_rarefaction_16S, include=FALSE}
+
+for_vegan_16S <-t(as.data.frame(otu_table(physeq_16S, 
+                                                 taxa_are_rows =TRUE)))
+
+# default plot is all in black, with black lines for the number of samples
+rarefaction_16S <- rarecurve(for_vegan_16S, 
+                                step = 1000, 
+                                sample = 10000, 
+                                xlab="number of sequences",
+                                ylab="number of OTUs",label=FALSE)
+
+```
+
+
+```{r}
+plot_data_16S <- rarefaction_16S %>% 
+  purrr::map(~ tibble(
+    y = as.vector(.x),
+    x = unname(attr(.x, "Subsample")),
+    steps = names(.x))) %>%
+  tibble(data = ., sample = seq_along(.)) %>%
+  unnest(data)
+
+stopifnot(identical(sort(unique(plot_data_16S$sample)), 1:NROW(sample_data(physeq_16S))))
+```
+
+
+```{r, eval = TRUE}
+number_sequences_perSample_16S <-sample_sums(physeq_16S)
+
+min_number <-min(number_sequences_perSample_16S)
+
+## color by habitat
+plot_data_16S$color <- sample_data(physeq_16S)$habitat [plot_data_16S$sample]
+
+
+rare_16S <- ggplot(plot_data_16S) +
+  geom_line(aes(x , y, color = color, 
+                group = sample)) +
+  geom_vline(xintercept = min_number, 
+             color = "darkgrey") +
+  #scale_color_manual(values = six_colors) +
+  labs(title = "Bacteria",
+       x = "number of sequences", 
+       y = "number of OTUs", 
+       color = NULL) +
+  theme_bw() +
+   theme(plot.title = element_text(hjust = 0.5))+
+  theme(legend.position = "none")
+
+
+print(rare_16S)
+
+
+
+
+
+
+```
+
+\newpage
+
+## 16S transform data
+
+```{r, echo=TRUE}
+
+physeq_16S_norm<-  transform_sample_counts(physeq_16S, function(x) x / sum(x) )
+
+
+physeq_16S_hell<-  transform_sample_counts(physeq_16S, function(x) sqrt(x / sum(x) ))
+
+
+```
+
+## 16S Stacked barplot at the phylum level
+
+Focus on the control samples samples  (soil and rhizosphere)
+
+```{r}
+physeq_16S_control <- subset_samples(physeq_16S_norm, 
+                                  traitement =="control")
+
+physeq_16S_control_norm<-  transform_sample_counts(physeq_16S_control, function(x) x / sum(x)*100 )
+
+##colSums(otu_table(physeq_16S_control_norm))
+
+## remove OTU which are not in the control
+
+physeq_16S_control_norm <- prune_taxa(
+                                   rowSums(otu_table(physeq_16S_control_norm))>0, physeq_16S_control_norm)
+
+
+```
+
+```{r}
+
+
+# aggregate the OTUs with same Phylum names
+dat_merge_16S <- tax_glom(physeq = physeq_16S_control_norm, 
+                      "Phylum", NArm = FALSE) 
+#colSums(otu_table(dat_merge))
+
+molten_dat_phylum_merge_16S <- psmelt(dat_merge_16S)
+
+```
+
+```{r}
+
+# the NA not assigned are less than 3%
+# molten_dat_phylum_merge_16S %>% 
+#   filter(is.na(Phylum)) %>% 
+#   select(Abundance)
+
+
+molten_dat_phylum_merge_16S<- molten_dat_phylum_merge_16S %>%
+  mutate("Taxonomy" = case_when(Abundance >= 2.5 ~ Phylum,
+                             Abundance < 2.5 ~ "less than 2.5%"))%>% 
+  mutate(Taxonomy = replace_na(Taxonomy,"not assigned"))
+
+```
+
+
+```{r}
+### Defining  colors by phylum
+
+# display.brewer.pal(n=12,
+#                      name = "Set3")
+# 
+ brewer.pal(12, name = "Set3")
+
+# levels(as.factor(molten_dat_phylum_merge_16S$Taxonomy))
+
+plotColorBarplot_16S=c(
+    "Acidobacteriota"="#8DD3C7",
+    "Actinobacteriota"="#FFFFB3",
+    "Bacteroidota"="#BEBADA",
+    "Firmicutes"= "#80B1D3",
+    "Gemmatimonadota"= "#FDB462",
+    "Myxococcota"="#FB8072",
+    "Planctomycetota" = "#B3DE69",
+    "Proteobacteria" = "#FCCDE5",
+    "Verrucomicrobiota" = "#BC80BD",
+    "less than 2.5%"="grey50",
+    "not assigned" = "grey90")
+
+```
+
+
+```{r}
+## calculate numbers for the paper
+molten_dat_phylum_merge_16S %>% 
+  group_by(Phylum)%>% 
+  summarise(mean_value = mean(Abundance)) %>%
+  arrange(desc(mean_value))
+```
+
+
+```{r}
+
+
+p_phyla_16S <- ggplot(molten_dat_phylum_merge_16S, 
+                  aes(x = code, 
+                             y = Abundance,
+                             fill = Taxonomy)) + 
+  geom_bar(stat = "identity", position = "stack")+
+  facet_grid(habitat  ~ management, scales = "free_x", space = "free_x")+
+   scale_fill_manual(values = plotColorBarplot_16S)+
+  labs( title = "Bacteria",
+        y = "Relative abundance (%)", 
+        x = NULL)+
+  theme(legend.position="bottom")+
+  theme(axis.text.x = element_text(size = 6))
+  
+
+p_phyla_16S
+
+
+```
+
+
+\newpage
+
+
+# alpha diversity option A (with all the data)
+
+
+## 16S calculate diversity indices
+
+```{r, echo= FALSE}
+
+otu_16S <- data.frame(otu_table(physeq_16S))
+
+sample_16S <- data.frame(sample_data(physeq_16S))
+
+sample_16S <- sample_16S %>% dplyr::select(c("traitement","habitat","code"))
+
+richness <- as.data.frame(specnumber(otu_16S, MARGIN = 2)) 
+
+colnames(richness) <- "richness"
+
+# Jost Diversity
+shannon <- as.data.frame(exp(diversity(otu_16S, MARGIN = 2))) # exponential of Shannon
+                           
+colnames(shannon) <- "shannon"
+
+# number of sequences per sample
+number_sequences_perSample <-as.data.frame(sample_sums(physeq_16S))
+
+colnames(number_sequences_perSample) <- "number_sequences_perSample"
+
+
+diversity_physeq_16S <-left_join(sample_16S%>% rownames_to_column("sample_names"), 
+          richness%>% rownames_to_column("sample_names"),
+          by = join_by(sample_names))
+
+diversity_physeq_16S <-left_join(diversity_physeq_16S, 
+          shannon%>% rownames_to_column("sample_names"),
+          by = join_by(sample_names))
+
+
+diversity_physeq_16S <-left_join(diversity_physeq_16S, 
+          number_sequences_perSample%>% rownames_to_column("sample_names"),
+          by = join_by(sample_names))
+
+# Hill's ratio  also called Sheldon's evenness
+diversity_physeq_16S <- diversity_physeq_16S  %>%
+  mutate (evenness = shannon/richness)
+
+
+```
+
+
+
+## ITS calculate the diversity indices
+
+
+
+```{r, echo= FALSE}
+
+otu_ITS <- data.frame(otu_table(physeq_ITS))
+
+sample_ITS <- data.frame(sample_data(physeq_ITS))
+
+sample_ITS <- sample_ITS %>% dplyr::select(c("traitement","habitat","code"))
+
+richness <- as.data.frame(specnumber(otu_ITS, MARGIN = 2)) 
+
+colnames(richness) <- "richness"
+
+# Jost Diversity
+shannon <- as.data.frame(exp(diversity(otu_ITS, MARGIN = 2)))
+                           
+colnames(shannon) <- "shannon"
+
+# number of sequences per sample
+number_sequences_perSample <-as.data.frame(sample_sums(physeq_ITS))
+
+colnames(number_sequences_perSample) <- "number_sequences_perSample"
+
+
+diversity_physeq_ITS <-left_join(sample_ITS%>% rownames_to_column("sample_names"), 
+          richness%>% rownames_to_column("sample_names"),
+          by = join_by(sample_names))
+
+diversity_physeq_ITS <-left_join(diversity_physeq_ITS, 
+          shannon%>% rownames_to_column("sample_names"),
+          by = join_by(sample_names))
+
+
+diversity_physeq_ITS <-left_join(diversity_physeq_ITS, 
+          number_sequences_perSample%>% rownames_to_column("sample_names"),
+          by = join_by(sample_names))
+
+# Hill's ratio  also called Sheldon's evenness
+diversity_physeq_ITS <- diversity_physeq_ITS  %>%
+  mutate (evenness = shannon/richness)
+
+
+```
+
+```{r}
+
+
+# re-organize the data 
+with_soil_16S <- diversity_physeq_16S |>
+  mutate(traitement = if_else(is.na(traitement), "soil", traitement))  |>
+  filter(traitement %in% c("ThermoSeed","control","synthetic","Tillecur", "soil")) |>
+   mutate(traitement = factor(traitement, levels = c("soil", "control", "synthetic", "ThermoSeed","Tillecur"))) |>
+  mutate(traitement = factor(traitement),              # convert to factor
+         traitement = relevel(traitement, ref = "soil")) |>
+   mutate(habitat = factor(habitat),              # convert to factor
+         habitat = relevel(habitat, ref = "soil"))
+
+
+with_soil_ITS <-  diversity_physeq_ITS|>
+  mutate(traitement = if_else(is.na(traitement), "soil", traitement))  |>
+  filter(traitement %in% c("ThermoSeed","control","synthetic","Tillecur", "soil")) |>
+  mutate(traitement = factor(traitement, levels = c("soil", "control","synthetic", "ThermoSeed","Tillecur"))) |>
+   mutate(habitat = factor(habitat),              # convert to factor
+         habitat = relevel(habitat, ref = "soil"))
+
+
+
+```
+
+
+\newpage
+
+## 16S Shannon (with soil for supplemental)
+
+```{r}
+
+# for Shannon, add as covariate the number of sequences per sample
+model_16S_shannon <- lmer(log(shannon) ~ traitement +  log(number_sequences_perSample) +  (1 | code), data = with_soil_16S)
+
+anova(model_16S_shannon)
+
+
+#summary(model_16S_shannon)
+
+```
+
+```{r, eval =FALSE}
+# Tukey-Anscomble
+plot(y = residuals(model_16S_shannon, scaled = T), x = predict(model_16S_shannon), 
+     main = "scaled residulas vs fitted", ylab = "scaled residuals", xlab = "fitted values")
+
+## QQ-plot
+qqnorm(residuals(model_16S_shannon), main = "QQ-plot of residuals")
+qqline(residuals(model_16S_shannon))
+
+```
+
+
+```{r, echo = FALSE, eval = TRUE}
+#levels(with_soil_16S$traitement)
+
+contrast_res<- emmeans(model_16S_shannon,
+        trt.vs.ctrl ~ traitement,
+        ref = "soil",
+        adjust = "dunnet")$contrasts
+
+contrast_res
+
+## add letters for the p.value < 0.05
+
+res_df <- as.data.frame(summary(contrast_res))
+
+
+letters_df <- res_df %>%
+  mutate(
+    traitement = str_remove(contrast, " - soil"),
+    group = ifelse(p.value < 0.05, "b", "a")) %>%
+  dplyr::select(traitement, group)
+  
+letters_df <- bind_rows(
+  data.frame(traitement = "soil", group = "a"),
+  letters_df
+)
+
+letters_df <- letters_df %>%
+  mutate(habitat = ifelse(traitement =="soil", "soil","rhizosphere"))
+
+#
+
+y <- with_soil_16S$shannon
+
+pos_df <- letters_df %>%
+  group_by(traitement) %>%
+  summarise(y_pos = max(y) + 0.1 * diff(range(y)))
+
+plot_letters <- left_join(letters_df, pos_df, by = "traitement")
+
+
+plot_letters <- plot_letters %>% 
+  mutate(traitement = factor(traitement, 
+                             levels = c("soil", 
+                                        "control", 
+                                        "synthetic",
+                                        "ThermoSeed",
+                                        "Tillecur")))%>% 
+  mutate(habitat = factor(habitat, levels = c("soil", "rhizosphere")))
+  
+```
+
+\newpage
+
+## Plot 16S Shannon (all data)
+
+```{r}
+
+
+
+#summary(model_16S_all)
+
+
+all_shannon_16S <- ggplot(with_soil_16S, 
+                aes(x = traitement,
+                   y = shannon)) + 
+  geom_dotplot(aes(fill = traitement),
+               binaxis = "y",
+               stackdir = "center")+
+   stat_summary(fun = "median", geom = "crossbar",  width = 0.3, color = "black") +
+  geom_text(data = plot_letters, aes(x = traitement,
+                                     y = y_pos, 
+                                     label = group))+
+  facet_grid(.~habitat, scales = "free", space = "free")+
+    scale_fill_manual(values = custom_colors)+
+      scale_x_discrete(guide = guide_axis(n.dodge = 2))+
+  labs (title = "Bacteria",
+        y = "Shannon" , 
+        x =NULL)+
+  my_theme+
+     theme(legend.position = "none")
+
+all_shannon_16S
+
+
+
+```
+
+\newpage
+
+## 16S Shannon (only rhizo)
+
+
+```{r}
+rhizo_16S <- with_soil_16S %>% filter(habitat =="rhizosphere")%>% filter(traitement %in% c("ThermoSeed","control","synthetic","Tillecur"))
+
+rhizo_16S$traitement <- droplevels(rhizo_16S$traitement)
+
+```
+
+
+```{r, echo = TRUE}
+
+model_16S_shannon <- lmer(log(shannon) ~ traitement +  log(number_sequences_perSample) +  (1 | code), data = rhizo_16S)
+
+anova(model_16S_shannon)
+
+
+# summary(model_16S_log)
+# 
+# write.csv(summary(model_16S_log)$coefficient, "../results/16S_rhizo_log.csv")
+
+#summary(model_16S_shannon)
+
+
+
+```
+
+```{r, eval = FALSE}
+emmeans(model_16S_shannon,
+        trt.vs.ctrl ~ traitement,
+        ref = "control",
+        adjust = "dunnet")$contrasts
+
+```
+
+```{r, eval = FALSE}
+
+# Tukey-Anscomble
+
+plot(y= residuals(model_16S_shannon, scaled = T), 
+     x = predict(model_16S_shannon), 
+     main = "scaled residulas vs fitted", ylab = "scaled residuals", xlab = "fitted values")
+
+## QQ-plot
+qqnorm(residuals(model_16S_shannon), 
+       main = "QQ-plot of residuals")
+qqline(residuals(model_16S_shannon))
+
+#summary(model_16S_log)
+
+
+
+```
+
+
+
+```{r}
+
+
+ctl <-rhizo_16S %>% 
+  filter(traitement == "control") %>%
+  dplyr::select(c("shannon","code","traitement"))
+                   
+ 
+treated <-rhizo_16S %>% 
+  dplyr::filter(!traitement == "control") %>%
+  dplyr::select(c("shannon","code","traitement"))
+
+# make it wide to combine all alternative treatments
+treated_wide <- treated %>%
+  pivot_wider(names_from = traitement, values_from = shannon)
+
+
+ 
+# make it long to join it with control
+treated_long <- treated_wide %>% 
+  pivot_longer(cols = synthetic:Tillecur,
+               values_to = "shannon", 
+               names_to = "traitement_name") 
+
+
+for_gg <-right_join(ctl, treated_long, by = "code")
+```
+
+
+\newpage
+
+## Plot log ratio Shannon (ITS all data)
+
+
+```{r}
+
+for_gg <- for_gg %>% 
+  mutate (ratio = shannon.y/shannon.x)
+
+for_gg <- for_gg %>%
+  mutate(traitement_name = fct_relevel(traitement_name, "synthetic"))
+
+
+# remove NA
+for_gg <- for_gg %>%
+  filter(!is.na(ratio))
+
+shannon_16S <- ggplot(for_gg, 
+                aes(x = traitement_name,
+                   y = log(ratio)))+
+  geom_dotplot(aes(fill = traitement_name),
+               binaxis = "y",
+               stackdir = "center")+
+   stat_summary(fun = "median", geom = "crossbar",  width = 0.3, color = "black")+
+     geom_hline(yintercept = 0, color = "red") +
+  labs (title = "Bacteria",
+        y = "log ratio Shannon" , 
+        x =NULL)+
+  scale_fill_manual(values = custom_colors)+
+  my_theme+
+  theme(legend.position = "none")
+
+shannon_16S
+
+
+
+```
+
+
+\newpage
+
+
+## ITS Shannon (with soil for supplemental)
+
+```{r}
+
+model_ITS_all <- lmer(shannon ~ traitement + log(number_sequences_perSample) + (1 | code), data = with_soil_ITS)
+
+anova(model_ITS_all)
+
+
+
+```
+
+```{r, eval = FALSE}
+# Tukey-Anscomble
+plot(y = residuals(model_ITS_all, scaled = T), x = predict(model_ITS_all), 
+     main = "scaled residulas vs fitted", ylab = "scaled residuals", xlab = "fitted values")
+
+
+qqnorm(residuals(model_ITS_all), main = "QQ-plot of residuals")
+qqline(residuals(model_ITS_all))
+```
+
+
+## Plot ITS Shannon (all data)
+
+```{r}
+
+all_shannon_ITS <- ggplot(with_soil_ITS, 
+                aes(x = traitement,
+                   y = shannon)) + 
+  geom_dotplot(aes(fill = traitement),
+               binaxis = "y",
+               stackdir = "center")+
+   stat_summary(fun = "median", geom = "crossbar",  width = 0.3, color = "black") +
+  facet_grid(.~habitat, scales = "free", space = "free")+
+    scale_fill_manual(values = custom_colors)+
+    scale_x_discrete(guide = guide_axis(n.dodge = 2))+
+
+  labs (title = "Fungi",
+        y = "Shannon" , 
+        x =NULL)+
+  my_theme+
+     theme(legend.position = "none")
+
+all_shannon_ITS
+
+
+```
+
+\newpage
+
+
+
+
+## ITS Shannon (only rhizo)
+
+
+```{r}
+rhizo_ITS <- with_soil_ITS %>% filter(habitat =="rhizosphere")%>% filter(traitement %in% c("ThermoSeed","control","synthetic","Tillecur"))
+
+rhizo_ITS$traitement <- droplevels(rhizo_ITS$traitement)
+
+```
+
+
+
+```{r, echo = TRUE}
+
+
+
+model_ITS_log <- lmer(log(shannon) ~ traitement+  log(number_sequences_perSample)+ (1 | code), 
+                      data = rhizo_ITS )
+
+anova(model_ITS_log)
+
+
+
+```
+
+```{r, eval = FALSE}
+
+plot(y = residuals(model_ITS_log, scaled = T), 
+     x = predict(model_ITS_log), 
+     main = "scaled residulas vs fitted", ylab = "scaled residuals", xlab = "fitted values")
+
+## QQ-plot
+qqnorm(residuals(model_ITS_log), main = "QQ-plot of residuals")
+qqline(residuals(model_ITS_log))
+
+#summary(model1)
+
+
+
+```
+
+
+```{r}
+
+
+ctl <-rhizo_ITS %>% 
+  dplyr::filter(traitement == "control") %>%
+  dplyr::select(c("shannon","code","traitement"))
+                   
+ 
+treated <-rhizo_ITS %>% 
+  dplyr::filter(!traitement == "control") %>%
+  dplyr::select(c("shannon","code","traitement"))
+
+# make it wide to combine all alternative treatments
+treated_wide <- treated %>%
+  pivot_wider(names_from = traitement, values_from = shannon)
+
+
+ 
+# meake it long to join it with control
+treated_long <- treated_wide %>% 
+  pivot_longer(cols = synthetic:Tillecur,
+               values_to = "shannon", 
+               names_to = "traitement_name") 
+
+
+for_gg <-right_join(ctl, treated_long, by = "code")
+
+```
+
+
+## Plot log ratio Shannon (ITS all data)
+
+```{r}
+
+for_gg <- for_gg %>% 
+  mutate (ratio = shannon.y/shannon.x)
+
+ 
+
+# remove NA
+for_gg <- for_gg %>%
+  filter(!is.na(ratio))
+
+ffor_gg <- for_gg %>%
+  mutate(traitement_name = fct_relevel(traitement_name, "synthetic"))
+
+
+
+shannon_ITS <- ggplot(for_gg, 
+                aes(x = traitement_name,
+                   y = log(ratio))) + 
+  geom_dotplot(aes(fill = traitement_name),
+               binaxis = "y",
+               stackdir = "center")+
+   stat_summary(fun = "median", geom = "crossbar",  width = 0.3, color = "black")+
+  geom_hline(yintercept = 0, color = "red") +
+  labs (title = "Fungi",
+        y = "log ratio richness" , 
+        x =NULL)+
+  my_theme+
+   scale_fill_manual(values = custom_colors)+
+  theme(legend.position = "none")
+
+shannon_ITS
+
+
+```
+
+
+
+
+# alpha diversity option B, rarefy data => supplemental
+
+## Rarefy
+
+
+```{r}
+raremax_16S <- 9073
+
+
+
+taxonTable_16S <-as.data.frame(otu_table(physeq_16S))
+
+
+
+```
+
+
+Bacterial communities are rarefied with `r raremax_16S`.
+
+Fungal communities are rarefied with `r raremax_ITS`. 
+Two samples are removed which are below the threshold.
+
+```{r}
+
+sample_names(subset_samples(physeq_ITS, colSums(otu_table(physeq_ITS)) < raremax_ITS))
+
+# remove samples below threshold
+physeq_ITS_rare <- subset_samples(physeq_ITS, colSums(otu_table(physeq_ITS)) > raremax_ITS)
+
+# remove  OTUs with zero sequences
+physeq_ITS_rare <-subset_taxa(physeq_ITS_rare, rowSums(otu_table(physeq_ITS_rare))>0 )
+
+
+taxonTable_ITS_rare <-as.data.frame(otu_table(physeq_ITS_rare))
+
+```
+
+
+
+This code chunk is from Bodenhausen et al. 2019 
+
+```{r rarefy_ITS, eval=FALSE, echo  = TRUE}
+
+richness_mat <- c()
+diversity_mat <- c()
+even_mat <- c()
+
+for (i in 1:500){
+  # generate rarefied community
+  
+  temp_mat <- t(rrarefy(t(taxonTable_ITS_rare), sample = raremax_ITS))
+  
+  # richness is species number
+  s <- specnumber(temp_mat, MARGIN=2)
+  #cbind( colSums(temp_mat>0),specnumber(temp_mat, MARGIN=2))
+  richness_mat <- cbind(richness_mat,s)
+  
+  # from Jost 2006: D=exp(H), exponential of shannon entropy
+  shannon <- vegan::diversity(temp_mat, index="shannon", MARGIN=2)
+  d <- exp(shannon)
+  diversity_mat <- cbind(diversity_mat,d)
+  
+  # Hill's ratio  also called Sheldon's evenness
+  j <- exp(shannon)/s
+  even_mat <- cbind(even_mat,j)
+}
+
+# calculate means of subsamples
+otu_diversity <- rowMeans(diversity_mat)
+otu_richness <- rowMeans(richness_mat)
+otu_evenness <- rowMeans(even_mat)
+
+# put them all in one dataframe
+summary_diversity_ITS <- data.frame( cbind( otu_diversity, otu_richness, otu_evenness))
+
+sampleTable_rare <- sample_data(physeq_ITS_rare)
+
+stopifnot(identical(rownames(sampleTable_rare), rownames(summary_diversity_ITS)))
+
+
+for_anova_ITS <- cbind(summary_diversity_ITS, sampleTable_rare)
+
+write.csv(for_anova_ITS, file="../final_results/for_anova_rarefied_ITS.csv")
+
+```
+
+
+```{r rarefy_16S, eval=FALSE}
+
+
+# this code chunk is from my Petunia paper
+
+richness_mat <- c()
+diversity_mat <- c()
+even_mat <- c()
+
+for (i in 1:500){
+  # generate rarefied community
+  
+  temp_mat <- t(rrarefy(t(taxonTable_16S), sample = raremax_16S))
+  
+  # richness is species number
+  s <- specnumber(temp_mat, MARGIN=2)
+  #cbind( colSums(temp_mat>0),specnumber(temp_mat, MARGIN=2))
+  richness_mat <- cbind(richness_mat,s)
+  
+  # from Jost 2006: D=exp(H), exponential of shannon entropy
+  shannon <- vegan::diversity(temp_mat, index="shannon", MARGIN=2)
+  d <- exp(shannon)
+  diversity_mat <- cbind(diversity_mat,d)
+  
+  # Hill's ratio  also called Sheldon's evenness
+  j <- exp(shannon)/s
+  even_mat <- cbind(even_mat,j)
+}
+
+# calculate means of subsamples
+otu_diversity <- rowMeans(diversity_mat)
+otu_richness <- rowMeans(richness_mat)
+otu_evenness <- rowMeans(even_mat)
+
+# put them all in one dataframe
+summary_diversity_16S<- data.frame( cbind( otu_diversity, otu_richness, otu_evenness))
+
+sampleTable_rare <- sample_data(physeq_16S)
+
+stopifnot(identical(rownames(sampleTable_rare), rownames(summary_diversity_16S)))
+
+
+for_anova_16S_rarefy <- cbind(summary_diversity_16S, sampleTable_rare)
+
+write.csv(for_anova_16S, file="../final_results/for_anova_rarefied_16S.csv")
+
+```
+
+
+
+
+
+```{r}
+for_anova_16S_rarefy <- read.csv("../final_results/for_anova_rarefied_16S.csv", header=TRUE)
+
+for_anova_ITS_rarefy <- read.csv("../final_results/for_anova_rarefied_ITS.csv", header=TRUE)
+
+# re-organize the data 
+with_soil_16S_rarefy <- for_anova_16S_rarefy |>
+  mutate(traitement = if_else(is.na(traitement), "soil", traitement))  |>
+  filter(traitement %in% c("ThermoSeed","control","synthetic","Tillecur", "soil")) |>
+   mutate(traitement = factor(traitement, levels = c("soil", "control", "synthetic", "ThermoSeed","Tillecur"))) |>
+  mutate(traitement = factor(traitement),              # convert to factor
+         traitement = relevel(traitement, ref = "soil")) |>
+   mutate(habitat = factor(habitat),              # convert to factor
+         habitat = relevel(habitat, ref = "soil"))
+
+
+with_soil_ITS_rarefy <-  for_anova_ITS_rarefy|>
+  mutate(traitement = if_else(is.na(traitement), "soil", traitement))  |>
+  filter(traitement %in% c("ThermoSeed","control","synthetic","Tillecur", "soil")) |>
+  mutate(traitement = factor(traitement, levels = c("soil", "control","synthetic", "ThermoSeed","Tillecur"))) |>
+   mutate(habitat = factor(habitat),              # convert to factor
+         habitat = relevel(habitat, ref = "soil"))
+
+
+
+```
+
+
+
+\newpage
+
+## 16S Shannon (with soil for supplemental)
+
+```{r}
+model_16S_shannon <- lmer(otu_diversity ~ traitement + (1 | code), data = with_soil_16S_rarefy)
+
+anova(model_16S_shannon)
+
+#summary(model_16S_shannon)
+
+```
+
+```{r, eval =FALSE}
+# Tukey-Anscomble
+plot(y = residuals(model_16S_shannon, scaled = T), x = predict(model_16S_shannon), 
+     main = "scaled residulas vs fitted", ylab = "scaled residuals", xlab = "fitted values")
+
+## QQ-plot
+qqnorm(residuals(model_16S_shannon), main = "QQ-plot of residuals")
+qqline(residuals(model_16S_shannon))
+
+```
+
+
+```{r, echo = FALSE}
+#levels(with_soil_16S$traitement)
+
+contrast_res <- emmeans(model_16S_shannon,
+        trt.vs.ctrl ~ traitement,
+        ref = "soil",
+        adjust = "dunnet")$contrasts
+
+contrast_res
+
+
+
+## add letters for the p.value < 0.05
+
+res_df <- as.data.frame(summary(contrast_res))
+
+
+letters_df <- res_df %>%
+  mutate(
+    traitement = str_remove(contrast, " - soil"),
+    group = ifelse(p.value < 0.05, "b", "a")) %>%
+  dplyr::select(traitement, group)
+  
+letters_df <- bind_rows(
+  data.frame(traitement = "soil", group = "a"),
+  letters_df
+)
+
+letters_df <- letters_df %>%
+  mutate(habitat = ifelse(traitement =="soil", "soil","rhizosphere"))
+
+#
+
+y <- with_soil_16S_rarefy$otu_diversity
+
+pos_df <- letters_df %>%
+  group_by(traitement) %>%
+  summarise(y_pos = max(y) + 0.1 * diff(range(y)))
+
+plot_letters <- left_join(letters_df, pos_df, by = "traitement")
+
+
+plot_letters <- plot_letters %>% 
+  mutate(traitement = factor(traitement, 
+                             levels = c("soil", 
+                                        "control", 
+                                        "synthetic",
+                                        "ThermoSeed",
+                                        "Tillecur")))%>% 
+  mutate(habitat = factor(habitat, levels = c("soil", "rhizosphere")))
+```
+
+\newpage
+
+## Plotting 16S Shannon (rarefied data)
+
+```{r}
+
+
+
+#summary(model_16S_all)
+
+
+all_shannon_16S_rarefy <- ggplot(with_soil_16S_rarefy, 
+                aes(x = traitement,
+                   y = otu_diversity)) + 
+  geom_dotplot(aes(fill = traitement),
+               binaxis = "y",
+               stackdir = "center")+
+   stat_summary(fun = "median", geom = "crossbar",  width = 0.3, color = "black") +
+  geom_text(data = plot_letters, aes(x = traitement,
+                                     y = y_pos, 
+                                     label = group))+
+  facet_grid(.~habitat, scales = "free", space = "free")+
+    scale_fill_manual(values = custom_colors)+
+      scale_x_discrete(guide = guide_axis(n.dodge = 2))+
+  labs (title = "Bacteria",
+        y = "Shannon" , 
+        x =NULL)+
+  my_theme+
+     theme(legend.position = "none")
+
+all_shannon_16S_rarefy
+
+
+
+```
+
+
+\newpage
+
+## only rhizo 16S Shannon rarefied
+
+
+```{r}
+rhizo_16S_rarefy <- with_soil_16S_rarefy %>% filter(habitat =="rhizosphere")%>% filter(traitement %in% c("ThermoSeed","control","synthetic","Tillecur"))
+
+```
+
+
+```{r, echo = TRUE}
+
+model_16S_log <- lmer(log(otu_diversity) ~ traitement+ (1 | code), data = rhizo_16S_rarefy )
+
+anova(model_16S_log)
+
+
+```
+
+```{r, eval = FALSE}
+
+# Tukey-Anscomble
+
+plot(y= residuals(model_16S_log, scaled = T), 
+     x = predict(model_16S_log), 
+     main = "scaled residulas vs fitted", ylab = "scaled residuals", xlab = "fitted values")
+
+## QQ-plot
+qqnorm(residuals(model_16S_log), 
+       main = "QQ-plot of residuals")
+qqline(residuals(model_16S_log))
+
+#summary(model_16S_log)
+
+
+
+```
+
+
+
+```{r}
+
+
+ctl <-rhizo_16S_rarefy %>% 
+  filter(traitement == "control") %>%
+  select(c("otu_diversity","code","traitement"))
+                   
+ 
+treated <-rhizo_16S_rarefy %>% 
+  dplyr::filter(!traitement == "control") %>%
+  select(c("otu_diversity","code","traitement"))
+
+# make it wide to combine all alternative treatments
+treated_wide <- treated %>%
+  pivot_wider(names_from = traitement, values_from = otu_diversity)
+
+
+ 
+# make it long to join it with control
+treated_long <- treated_wide %>% 
+  pivot_longer(cols = synthetic:Tillecur,
+               values_to = "otu_diversity", 
+               names_to = "traitement_name") 
+
+
+for_gg <-right_join(ctl, treated_long, by = "code")
+```
+
+
+## Plot log ratio Shannon (16S rarefied)
+
+```{r}
+
+for_gg <- for_gg %>% 
+  mutate (ratio = otu_diversity.y/otu_diversity.x)
+
+for_gg <- for_gg %>%
+  mutate(traitement_name = fct_relevel(traitement_name, "synthetic"))
+
+
+# remove NA
+for_gg <- for_gg %>%
+  filter(!is.na(ratio))
+
+rhizo_shannon_16S_rarefy <- ggplot(for_gg, 
+                aes(x = traitement_name,
+                   y = log(ratio)))+
+  geom_dotplot(aes(fill = traitement_name),
+               binaxis = "y",
+               stackdir = "center")+
+   stat_summary(fun = "median", geom = "crossbar",  width = 0.3, color = "black")+
+     geom_hline(yintercept = 0, color = "red") +
+  labs (title = "Bacteria",
+        y = "log ratio Shannon" , 
+        x =NULL)+
+  scale_fill_manual(values = custom_colors)+
+  my_theme+
+  theme(legend.position = "none")
+
+rhizo_shannon_16S_rarefy
+
+```
+
+
+
+\newpage
+
+
+## ITS shannon (with soil for supplemental)
+
+```{r}
+
+model_ITS_all <- lmer(otu_diversity ~ traitement + (1 | code), data = with_soil_ITS_rarefy)
+
+anova(model_ITS_all)
+
+# m5 <- lmer(log(shannon) ~ traitement + (1 | code), data = rhizo)
+# 
+# anova(m5)
+
+
+#summary(model_ITS_all)
+
+
+```
+
+```{r, eval = FALSE}
+# Tukey-Anscomble
+plot(y = residuals(model_ITS_all, scaled = T), x = predict(model_ITS_all), 
+     main = "scaled residulas vs fitted", ylab = "scaled residuals", xlab = "fitted values")
+
+
+qqnorm(residuals(model_ITS_all), main = "QQ-plot of residuals")
+qqline(residuals(model_ITS_all))
+```
+
+## Plotting ITS Shannon (rarefied data)
+
+
+```{r}
+
+all_shannon_ITS_rarefy <- ggplot(with_soil_ITS_rarefy, 
+                aes(x = traitement,
+                   y = otu_diversity)) + 
+  geom_dotplot(aes(fill = traitement),
+               binaxis = "y",
+               stackdir = "center")+
+   stat_summary(fun = "median", geom = "crossbar",  width = 0.3, color = "black") +
+  facet_grid(.~habitat, scales = "free", space = "free")+
+    scale_fill_manual(values = custom_colors)+
+    scale_x_discrete(guide = guide_axis(n.dodge = 2))+
+
+  labs (title = "Fungi",
+        y = "Shannon" , 
+        x =NULL)+
+  my_theme+
+     theme(legend.position = "none")
+
+all_shannon_ITS_rarefy
+
+
+```
+
+\newpage
+
+
+
+## ITS Shannon (only rhizo)
+
+
+
+```{r}
+rhizo_ITS_rarefy <- with_soil_ITS_rarefy %>% filter(habitat =="rhizosphere")%>% filter(traitement %in% c("ThermoSeed","control","synthetic","Tillecur"))
+
+```
+
+
+```{r, echo = TRUE}
+
+model_ITS_log <- lmer(log(otu_diversity) ~ traitement+ (1 | code), data = rhizo_ITS_rarefy )
+
+anova(model_ITS_log)
+
+
+
+```
+
+```{r, eval = FALSE}
+
+plot(y = residuals(model_ITS_log, scaled = T), 
+     x = predict(model_ITS_log), 
+     main = "scaled residulas vs fitted", ylab = "scaled residuals", xlab = "fitted values")
+
+## QQ-plot
+qqnorm(residuals(model_ITS_log), main = "QQ-plot of residuals")
+qqline(residuals(model_ITS_log))
+
+#summary(model1)
+
+
+
+```
+
+
+```{r}
+
+
+ctl <-rhizo_ITS_rarefy %>% 
+  filter(traitement == "control") %>%
+  select(c("otu_diversity","code","traitement"))
+                   
+ 
+treated <-rhizo_ITS_rarefy %>% 
+  dplyr::filter(!traitement == "control") %>%
+  select(c("otu_diversity","code","traitement"))
+
+# make it wide to combine all alternative treatments
+treated_wide <- treated %>%
+  pivot_wider(names_from = traitement, values_from = otu_diversity)
+
+
+ 
+# meake it long to join it with control
+treated_long <- treated_wide %>% 
+  pivot_longer(cols = synthetic:Tillecur,
+               values_to = "otu_diversity", 
+               names_to = "traitement_name") 
+
+
+for_gg <-right_join(ctl, treated_long, by = "code")
+
+```
+
+## Plot log ratio Shannon (ITS rarefied)
+
+
+```{r}
+
+for_gg <- for_gg %>% 
+  mutate (ratio = otu_diversity.y/otu_diversity.x)
+
+ 
+
+# remove NA
+for_gg <- for_gg %>%
+  filter(!is.na(ratio))
+
+for_gg <- for_gg %>%
+  mutate(traitement_name = fct_relevel(traitement_name, "synthetic"))
+
+
+
+rhizo_shannon_ITS_rarefy <- ggplot(for_gg, 
+                aes(x = traitement_name,
+                   y = log(ratio))) + 
+  geom_dotplot(aes(fill = traitement_name),
+               binaxis = "y",
+               stackdir = "center")+
+   stat_summary(fun = "median", geom = "crossbar",  width = 0.3, color = "black")+
+  geom_hline(yintercept = 0, color = "red") +
+  labs (title = "Fungi",
+        y = "log ratio richness" , 
+        x =NULL)+
+  my_theme+
+   scale_fill_manual(values = custom_colors)+
+  theme(legend.position = "none")
+
+rhizo_shannon_ITS_rarefy
+
+
+```
+
+
+
+
+
+\newpage
+
+
+
+# Beta diversity
+
+
+## ITS PERMANOVA
+
+
+
+```{r, echo =TRUE}
+
+env_ITS <- data.frame(sample_data(physeq_ITS_norm))
+
+otu_ITS <- vegdist(t(otu_table(physeq_ITS_norm, taxa_are_rows = FALSE)))
+
+bd <- betadisper(otu_ITS, group = env_ITS$code)
+
+anova(bd)
+
+permutest(bd, permutations = 999)
+# No evidence that groups differ in dispersion.
+# The PERMANOVA assumption of homogeneity of dispersion is met.
+
+adonis2(otu_ITS ~ code, data =  env_ITS)
+
+adonis2(otu_ITS ~ habitat, data =  env_ITS)
+
+adonis2(otu_ITS ~ date, data =  env_ITS)
+
+adonis2(otu_ITS ~ management, data =  env_ITS)
+
+
+
+```
+
+ We observe a strong effect of `code`, `habitat`, and `date`, no effect for `management`.
+ 
+In general, the four replicates from each farm are close to each other which is a good sign: there was no mixup in the samples and everything went well during the DNA extractions, PCR, and barcoding.
+
+The first axis seperates the fields according to some gradient but the second axis seperates CH13 from the others.
+
+ Very similar pattern with PCA made with Hellinger-transformed data and Euclidean distance.
+
+ 
+\newpage
+
+## ITS PCA
+
+
+```{r PCA_ITS, eval = TRUE, fig.height = 7}
+
+physeq_PCA <- ordinate(physeq_ITS_hell, "RDA", distance="euclidean")
+
+# for the PCoA plots, nicer to use Sample_ID because they include site names
+pca_ITS <- plot_ordination(physeq_ITS_hell,
+                       physeq_PCA,axes=c(1,2),
+                        color="code", 
+                       shape="habitat",
+                       label="code")+
+                      geom_point(alpha=0.6)+
+  my_theme+
+  labs(title = "Fungi")+
+    theme(legend.position = "none")
+
+ pca_ITS
+ 
+
+```
+
+\newpage
+
+
+\newpage
+
+## 16S PERMANOVA
+
+```{r, echo =TRUE}
+
+env_16S <- data.frame(sample_data(physeq_16S_norm))
+
+otu_16S <- vegdist(t(otu_table(physeq_16S_norm, taxa_are_rows = FALSE)))
+
+bd <- betadisper(otu_16S, group = env_16S$code)
+
+anova(bd)
+
+permutest(bd, permutations = 999)
+
+
+adonis2(otu_16S ~ code, data =  env_16S)
+
+adonis2(otu_16S ~ habitat, data =  env_16S)
+
+adonis2(otu_16S ~ date, data =  env_16S)
+
+adonis2(otu_16S ~ management, data =  env_16S)
+
+
+
+```
+
+ We observe a strong effect of `code`, `habitat`, and `date`, only weak effect for `management` effect.
+ 
+In general, the four replicates from each farm are close to each other which is a good sign: there was no mixup in the samples and everything went well during the DNA extractions, PCR, and barcoding.
+
+The first axis seperates the fields according to some gradient but the second axis seperates CH13 from the others.
+
+ Very similar pattern with PCA made with Hellinger-transformed data and Euclidean distance.
+
+ 
+\newpage
+
+## 16S PCA
+
+
+```{r PCA_16S, eval = TRUE, fig.height = 7}
+
+physeq_PCA <- ordinate(physeq_16S_hell, "RDA", distance="euclidean")
+
+# for the PCoA plots, nicer to use Sample_ID because they include site names
+pca_16S <- plot_ordination(physeq_16S_hell,
+                       physeq_PCA,axes=c(1,2),
+                        color="code", 
+                       shape="habitat",
+                       label="code")+
+                      geom_point(alpha=0.6)+
+  my_theme+
+  labs(title = "Bacteria")+
+    theme(legend.position = "none")
+
+ pca_16S
+ 
+
+```
+
+\newpage
+
+
+\newpage
+
+# Constrained Analysis
+
+
+
+## ITS add soil data
+
+Subset only the non-treated samples
+
+
+```{r}
+physeq_ITS_untreated <- subset_samples(physeq_ITS, traitement =="control")
+
+```
+
+
+```{r}
+
+
+soil_data <- read.csv("../final_data/TableS4.csv")
+
+meta_data <- data.frame(sample_data(physeq_ITS_untreated)) 
+
+
+
+## add soil data
+
+with_soil <-left_join(meta_data %>% rownames_to_column("phyloseq_id"),
+          soil_data, 
+          by = "code")
+
+
+## add data to phyloseq object
+sample_data(physeq_ITS_untreated) <- with_soil%>%column_to_rownames("phyloseq_id")
+
+```
+
+
+```{r}
+#  we like to have percentages
+physeq_ITS_untreated_norm<-  transform_sample_counts(physeq_ITS_untreated, function(x) x / sum(x)*100 )
+
+#colSums(otu_table(physeq_ITS_untreated_norm))
+
+```
+
+## prepare the data for RDA
+
+
+```{r}
+# OTU
+taxonTable_ITS <-otu_table(physeq_ITS_untreated_norm, taxa_are_rows = FALSE)
+
+taxonTable_ITS_hell <- sqrt(taxonTable_ITS) # hellinger is sqrt relative abundance
+
+taxonTable_ITS_hell <- t(taxonTable_ITS_hell) # in vegan, samples are in the rows
+
+env_data_ITS <-data.frame(sample_data(physeq_ITS_untreated_norm))
+
+# small_env<- env_data_ITS %>% dplyr::select(-field,- library, - year)
+
+small_env_ITS<- env_data_ITS %>% 
+  dplyr::select(PH.H2O:Calcium_pourcent) %>% 
+  select(-silt_pourcent)
+
+# change names
+
+small_env_ITS <- small_env_ITS %>%
+  mutate(pH = PH.H2O,
+         Corg = Corg_pourcent,
+         clay = argile_pourcent,
+         sand = sable_pourcent,
+         P = phosphore_indice,
+         K = potassium_indice,
+         Mg = magnesium_indice,
+         Ca = Calcium_pourcent,
+                     .keep ="unused")
+
+
+```
+
+
+## ITS forward selection with ordistep
+
+```{r, echo=FALSE}
+
+# with 0 there is no constraint => PCA
+
+mod0_ITS<- rda(taxonTable_ITS_hell ~  1, data = small_env_ITS) # Model with intercept only
+
+mod1_ITS <- rda(taxonTable_ITS_hell ~ ., data = small_env_ITS) # Model with all explanatory variables
+
+anova(mod1_ITS)
+```
+
+
+```{r, echo = FALSE, eval = TRUE}
+# ordiR2step takes a bit less time than ordistep
+# only run this code chunk by hand
+
+(adjR2.tbrda <- RsquareAdj(mod1_ITS)$adj.r.squared)
+#  0.1950007 - adjusted R2 explained by all variables is 19%
+
+# 
+# mod3_ITS<- ordiR2step (mod0_ITS, scope = formula (mod1_ITS), R2scope = adjR2.tbrda, direction = 'forward', permutations = 999)
+# # 
+ # save(mod3_ITS, file="../final_results/ordi2step_ITS.rda")
+# 
+load("../final_results/ordi2step_ITS.rda")
+
+mod3_ITS$anova
+
+mod3_ITS$call
+
+
+write.csv(mod3_ITS$anova, "../final_results/TableS10B.csv")
+
+
+
+
+RsquareAdj(mod3_ITS)$adj.r.squared
+```
+
+\newpage
+
+## ITS Triplot RDA 
+
+
+
+```{r prepare_data_triplot_ITS}
+
+#ord$eig
+eig2 <- eigenvals(mod3_ITS)
+#eig2 / sum(eig2)
+#cumsum(eig2 / sum(eig2))
+
+percent_RDA <-round(eig2 / sum(eig2)*100,1)
+
+coordi_RDA <- (paste("RDA", c(1:9),
+                 paste(" (",percent_RDA[1:9],"%",")",sep=""),
+                 sep=""))
+
+
+species_scores_rda <-scores(mod3_ITS, 
+                 choice=1:2,
+                 scaling="species",
+                 display="sp")
+
+sites_scores_rda <-scores(mod3_ITS, 
+                 choice=1:2,
+                 scaling="species",
+                 display="lc")
+
+
+
+
+env_arrow_rda <- mod3_ITS$CCA$biplot[,1:2]
+
+# Settings
+ahead <- 0.05   # Length of arrow heads
+offset <- 0.1 # distance between arrow head and center of blue text
+mult_arrow <- 3
+mult_species <- 2.5
+
+on_the_left  <-sites_scores_rda %>% 
+  as.data.frame() %>%
+  tibble::rownames_to_column("sample_name")
+
+on_the_right <-env_data_ITS %>% 
+  rownames_to_column("sample_name")%>%
+  dplyr::select(code, sample_name)
+
+sites <- left_join(on_the_left, 
+                   on_the_right , 
+                   by = "sample_name") 
+
+sites <- sites %>%
+  mutate(code = factor(code, levels = sort(unique(as.character(code)))))
+
+#levels(sites$code)
+
+
+species <- data.frame()
+
+# p 219 Borcard
+spe.good.rda <- goodness(mod3_ITS) # by default species
+sel.sp.rda <- which (spe.good.rda[,2]>=0.3) # cumulative
+
+
+species <-  (species_scores_rda * mult_species) %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("OTU") %>% 
+  #mutate(has_label = OTU %in% top_OTU$otu)
+  mutate(has_label = OTU %in% names(sel.sp.rda))
+
+# alternatively label extreme sites
+species_label <- species %>% 
+  filter(abs(RDA1)>1 | abs(RDA2)>1)
+
+
+
+environment <- (env_arrow_rda * mult_arrow) %>%
+  as.data.frame() %>% 
+  dplyr::select("RDA1", "RDA2") %>%
+  tibble::rownames_to_column("environment") %>%
+  mutate(len = sqrt(RDA1^2 + RDA2^2), 
+       hoffset = RDA1/len*offset, voffset = RDA2/len*offset)
+
+```
+
+
+
+```{r plot_triplot_ITS}
+
+# Plot
+rda_ITS <- ggplot() +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  # geom_point(aes(RDA1, RDA2), color = "grey", 
+  #            shape = "cross", data = species) +
+  # geom_text(aes(RDA1, RDA2, label = OTU), color = "grey", 
+  #             hjust = 0, nudge_x = .05, 
+  #           data = species %>% filter(.data$has_label)) +
+  geom_point(aes(RDA1, RDA2, color = code), data = sites) +
+  geom_text(aes(RDA1, RDA2, color = code, label = code), 
+              hjust = 0, nudge_x = .05, data = sites) +
+  geom_segment(aes(x = 0, y = 0, xend = RDA1, yend = RDA2), 
+                 color = "blue", 
+               arrow = arrow(length=unit(0.02,"npc"), type = "open"),
+               data = environment) +
+  geom_text(aes(RDA1 + hoffset, RDA2 + voffset, 
+                label = environment), color = "blue",
+            data = environment) +
+  coord_equal(ratio = 1, clip = "off") +
+  theme_bw() +
+  labs(title = "Fungi",
+       x = coordi_RDA[1], 
+       y = coordi_RDA[2]) +
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+    theme(legend.position = "none")
+
+print(rda_ITS) 
+  
+
+```
+
+\newpage
+
+
+## 16S add soil data
+
+Subset only the non-treated samples
+
+
+```{r}
+physeq_16S_untreated <- subset_samples(physeq_16S, traitement =="control")
+
+
+
+# decide to go back to Excel and try to make the identifier in excel instead of R
+
+meta_data <- data.frame(sample_data(physeq_16S_untreated)) 
+
+
+
+## add soil data
+
+with_soil <-left_join(meta_data %>% rownames_to_column("phyloseq_id"),
+          soil_data, 
+          by =c("code"))
+
+
+## add data to phyloseq object
+sample_data(physeq_16S_untreated) <- with_soil%>%column_to_rownames("phyloseq_id")
+
+```
+
+
+```{r}
+#  we like to have percentages
+physeq_16S_untreated_norm<-  transform_sample_counts(physeq_16S_untreated, function(x) x / sum(x)*100 )
+
+# colSums(otu_table(physeq_16S_untreated_norm))
+
+
+```
+
+## prepare data for RDA
+
+
+```{r}
+# OTU
+taxonTable_16S <-otu_table(physeq_16S_untreated_norm, taxa_are_rows = FALSE)
+
+taxonTable_16S_hell <- sqrt(taxonTable_16S) # hellinger is sqrt relative abundance
+
+taxonTable_16S_hell <- t(taxonTable_16S_hell) # in vegan, samples are in the rows
+
+env_data_16S <-data.frame(sample_data(physeq_16S_untreated_norm))
+
+# small_env_16S<- env_data_16S %>% dplyr::select(-field,- library, - year)
+
+small_env_16S<- env_data_16S %>% 
+  dplyr::select(PH.H2O:Calcium_pourcent)%>% 
+  select(-silt_pourcent)
+
+# change names
+
+small_env_16S <- small_env_16S %>%
+  mutate(pH = PH.H2O,
+         Corg = Corg_pourcent,
+         clay = argile_pourcent,
+         sand = sable_pourcent,
+         P = phosphore_indice,
+         K = potassium_indice,
+         Mg = magnesium_indice,
+         Ca = Calcium_pourcent,
+                     .keep ="unused")
+
+
+```
+
+
+## 16S forward selection with ordistep
+
+```{r, echo=FALSE}
+
+# with 0 there is no constraint => PCA
+
+mod0_16S<- rda(taxonTable_16S_hell ~  1, data = small_env_16S)
+
+mod1_16S <- rda(taxonTable_16S_hell ~ ., data = small_env_16S)
+
+anova(mod1_16S)
+```
+
+
+```{r, echo = FALSE, eval = TRUE}
+# ordiR2step takes a bit less time than ordistep
+# only run this code chunk by hand
+
+(adjR2.tbrda <- RsquareAdj(mod1_16S)$adj.r.squared)
+#   0.3156094 - adjusted R2 explained by all variables is 32%
+
+
+
+# 
+# mod3_16S<- ordiR2step (mod0_16S, scope = formula (mod1_16S), R2scope = adjR2.tbrda, direction = 'forward', permutations = 999)
+# #    
+# save(mod3_16S, file="../final_results/ordi2step_16S.rda")
+
+load("../final_results/ordi2step_16S.rda")
+
+mod3_16S$anova
+mod3_16S$call
+
+
+write.csv(mod3_16S$anova, "../final_results/TableS10A.csv")
+
+
+
+RsquareAdj(mod3_16S)$adj.r.squared
+```
+
+
+
+\newpage
+
+## 16S Triplot RDA 
+
+
+
+```{r prepare_data_triplot_16S}
+
+#ord$eig
+eig2 <- eigenvals(mod3_16S)
+#eig2 / sum(eig2)
+#cumsum(eig2 / sum(eig2))
+
+percent_RDA <-round(eig2 / sum(eig2)*100,1)
+
+coordi_RDA <- (paste("RDA", c(1:9),
+                 paste(" (",percent_RDA[1:9],"%",")",sep=""),
+                 sep=""))
+
+
+species_scores_rda <-scores(mod3_16S, 
+                 choice=1:2,
+                 scaling="species",
+                 display="sp")
+
+sites_scores_rda <-scores(mod3_16S, 
+                 choice=1:2,
+                 scaling="species",
+                 display="lc")
+
+
+
+
+env_arrow_rda <- mod3_16S$CCA$biplot[,1:2]
+
+
+# Settings
+ahead <- 0.05   # Length of arrow heads
+offset <- 0.1 # distance between arrow head and center of blue text
+mult_arrow <- 3
+mult_species <- 2.5
+
+on_the_left  <-sites_scores_rda %>% 
+  as.data.frame() %>%
+  tibble::rownames_to_column("sample")
+
+on_the_right <-env_data_16S %>% 
+  dplyr::select(code)%>%
+  tibble::rownames_to_column("sample")
+
+sites <- left_join(on_the_left, 
+                   on_the_right , 
+                   by = "sample")
+
+sites <- sites %>%
+  mutate(code = factor(code, levels = sort(unique(as.character(code)))))
+
+
+species <- data.frame()
+
+# p 219 Borcard
+spe.good.rda <- goodness(mod3_16S) # by default species
+sel.sp.rda <- which (spe.good.rda[,2]>=0.3) # cumulative
+
+
+species <-  (species_scores_rda * mult_species) %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("OTU") %>% 
+  #mutate(has_label = OTU %in% top_OTU$otu)
+  mutate(has_label = OTU %in% names(sel.sp.rda))
+
+# alternatively label extreme sites
+species_label <- species %>% 
+  filter(abs(RDA1)>1 | abs(RDA2)>1)
+
+
+
+environment <- (env_arrow_rda * mult_arrow) %>%
+  as.data.frame() %>% 
+  dplyr::select("RDA1", "RDA2") %>%
+  tibble::rownames_to_column("environment") %>%
+  mutate(len = sqrt(RDA1^2 + RDA2^2), 
+       hoffset = RDA1/len*offset, voffset = RDA2/len*offset)
+
+```
+
+
+
+```{r plot_triplot_16S}
+
+# Plot
+rda_16S <- ggplot() +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  # geom_point(aes(RDA1, RDA2), color = "grey", 
+  #            shape = "cross", data = species) +
+  # geom_text(aes(RDA1, RDA2, label = OTU), color = "grey", 
+  #             hjust = 0, nudge_x = .05, 
+  #           data = species %>% filter(.data$has_label)) +
+  geom_point(aes(RDA1, RDA2, color = code), data = sites) +
+  geom_text(aes(RDA1, RDA2, color = code, label = code), 
+              hjust = 0, nudge_x = .05, data = sites) +
+  geom_segment(aes(x = 0, y = 0, xend = RDA1, yend = RDA2), 
+                 color = "blue", 
+               arrow = arrow(length=unit(0.02,"npc"), type = "open"),
+               data = environment) +
+  geom_text(aes(RDA1 + hoffset, RDA2 + voffset, 
+                label = environment), color = "blue",
+            data = environment) +
+  coord_equal(ratio = 1, clip = "off") +
+  theme_bw() +
+  labs(title = "Bacteria",
+       x = coordi_RDA[1], 
+       y = coordi_RDA[2]) +
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+    theme(legend.position = "none")
+
+print(rda_16S) 
+  
+
+
+```
+
+
+\newpage
+
+# Figures with cowplot
+
+
+##  Figure 4
+
+```{r}
+
+two_alpha <-plot_grid(rhizo_shannon_16S_rarefy +theme_main,
+                      rhizo_shannon_ITS_rarefy +theme_main, 
+                         labels = c('A', 'B'),
+                      ncol = 2,
+                      label_size = 12)
+
+#print(two_alpha)
+
+if(makeFig == TRUE) ggsave("../final_figures/Figure4.png",
+                           two_alpha,
+                           width = 17, 
+                           height = 8.5, 
+                           units = "cm")
+
+
+
+
+```
+
+
+## Figure 5
+
+```{r}
+
+
+two_rda <-plot_grid(rda_16S + theme_main,
+                      rda_ITS + theme_main, 
+                         labels = c('A', 'B'),
+                      ncol = 2,
+                      label_size = 12)
+
+#print(two_rda)
+
+
+if(makeFig == TRUE) ggsave("../final_figures/Figure5.png",
+                           two_rda,
+                           width = 17, 
+                           height = 8.5, 
+                           units = "cm")
+
+```
+
+## Figure S3
+
+```{r}
+
+two_rare <-plot_grid(rare_16S + theme_main,
+                      rare_ITS + theme_main, 
+                         labels = c('A', 'B'),
+                      nrow = 2,
+                      label_size = 12)
+
+#print(two_rare)
+
+if(makeFig == TRUE) ggsave("../final_figures/FigureS3.png",
+                           two_rare,
+                           width = 16, 
+                           height = 18, 
+                           units = "cm")
+
+
+```
+
+
+
+## Figure S4
+
+```{r}
+
+two_stacked <-plot_grid(p_phyla_16S+theme_main ,
+                      p_phyla_ITS , 
+                         labels = c('A', 'B'),
+                      nrow = 2,
+                      label_size = 12)
+
+#print(two_stacked)
+
+if(makeFig == TRUE) ggsave("../final_figures/FigureS4.png",
+                           two_stacked,
+                           width = 16, 
+                           height = 18, 
+                           units = "cm")
+
+
+```
+
+##  Figure S5 C and D
+
+```{r}
+
+two_alpha <-plot_grid(all_shannon_16S +theme_main,
+                      all_shannon_ITS +theme_main, 
+                         labels = c('A', 'B'),
+                      ncol = 2,
+                      label_size = 12)
+
+#print(two_alpha)
+
+if(makeFig == TRUE) ggsave("../final_figures/FigureS5AB.png",
+                           two_alpha,
+                           width = 17, 
+                           height = 8.5, 
+                           units = "cm")
+
+
+
+```
+
+
+##  Figure S5 C and D
+
+```{r}
+
+two_alpha <-plot_grid(all_shannon_16S_rarefy +theme_main,
+                      all_shannon_ITS_rarefy +theme_main, 
+                         labels = c('C', 'D'),
+                      ncol = 2,
+                      label_size = 12)
+
+#print(two_alpha)
+
+if(makeFig == TRUE) ggsave("../final_figures/FigureS5CD.png",
+                           two_alpha,
+                           width = 17, 
+                           height = 8.5, 
+                           units = "cm")
+
+
+
+```
+
+
+##  Figure S6
+
+```{r}
+
+two_alpha <-plot_grid(rhizo_shannon_16S_rarefy +theme_main,
+                      rhizo_shannon_ITS_rarefy +theme_main, 
+                         labels = c('A', 'B'),
+                      ncol = 2,
+                      label_size = 12)
+
+#print(two_alpha)
+
+if(makeFig == TRUE) ggsave("../final_figures/FigureS6.png",
+                           two_alpha,
+                           width = 17, 
+                           height = 8.5, 
+                           units = "cm")
+
+
+
+
+```
+
+## Figure S7
+
+```{r}
+
+
+two_pca <-plot_grid(pca_16S + theme_main,
+                      pca_ITS + theme_main, 
+                         labels = c('A', 'B'),
+                      ncol = 2,
+                      label_size = 12)
+
+# print(two_pca)
+
+
+if(makeFig == TRUE) ggsave("../final_figures/FigureS7.png",
+                           two_pca,
+                           width = 17, 
+                           height = 8.5, 
+                           units = "cm")
+
+
+```
+
+## to do
+
+- add the non-rarefied data analysis (Figure 2 and Figur S5 AB)
+ 
+- make sure to only save data which is actually present in the MS (supplementary tables)
