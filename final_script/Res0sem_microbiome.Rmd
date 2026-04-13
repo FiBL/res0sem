@@ -14,13 +14,12 @@ knitr::opts_chunk$set(echo = FALSE, cache = FALSE)
 
 suppressPackageStartupMessages(library(tidyverse))
 
-library("phyloseq")
-library("vegan") # it's included in phyloseq
-
+library(phyloseq)
+library(vegan) # it's included in phyloseq
 library(cowplot) # plot_grid
 library(lmerTest)  # automatically loads lme4 too
 library(emmeans)  # for posthoc test
-library("RColorBrewer")
+library(RColorBrewer)
 
 
 
@@ -74,7 +73,7 @@ tax_ITS <-as.matrix(tax_ITS)
 
 
 
-otu_ITS <- read.csv("../final_data/otu_ITS.csv")
+otu_ITS <- read.csv("../final_data/OTU_ITS.csv")
 
 otu_ITS <-as.matrix(otu_ITS)
 
@@ -99,7 +98,7 @@ tax_16S <-as.matrix(tax_16S)
 
 
 
-otu_16S <- read.csv("../final_data/otu_16S.csv")
+otu_16S <- read.csv("../final_data/OTU_16S.csv")
 
 otu_16S <-as.matrix(otu_16S)
 
@@ -1178,7 +1177,7 @@ stopifnot(identical(rownames(sampleTable_rare), rownames(summary_diversity_16S))
 
 for_anova_16S_rarefy <- cbind(summary_diversity_16S, sampleTable_rare)
 
-write.csv(for_anova_16S, file="../final_results/for_anova_rarefied_16S.csv")
+write.csv(for_anova_16S_rarefy, file="../final_results/for_anova_rarefied_16S.csv")
 
 ```
 
