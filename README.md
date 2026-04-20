@@ -1,6 +1,6 @@
 # Rés0sem
 
-This repository accompagny the paper _Agronomic Performance and Microbial Diversity of Wheat Following Organic and Synthetic Seed Treatments: A Three-Year On-Farm Swiss Field Study_, which summaries some of the results of the the [Rés0sem project](https://resosem.ch/). By studying the effect of seed treatment (both chemical and organic alternatives) on both the microbiome and crop yield, Rés0sem aims at providing a scientific basis to reduce seed pesticide treatments.
+This repository accompagny the paper [_Agronomic Performance and Microbial Diversity of Wheat Following Organic and Synthetic Seed Treatments: A Three-Year On-Farm Swiss Field Study_](https://doi.org/10.1002/sae2.70168), which summaries some of the results of the the [Rés0sem project](https://resosem.ch/). By studying the effect of seed treatment (both chemical and organic alternatives) on both the microbiome and crop yield, Rés0sem aims at providing a scientific basis to reduce seed pesticide treatments.
 
 The project is funded by the [Federal Office for Agriculture](https://www.blw.admin.ch/en) (Switzerland) and supported by various partners
 
