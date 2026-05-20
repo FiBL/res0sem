@@ -28,6 +28,8 @@ final_script/*.pdf
 
 # produced figures
 figures/*.png
+final_figures/*.png
+
 
 # produced vignettes
 vignettes/*.html
